@@ -1,3 +1,100 @@
+# ****************
+# Main classes ***
+# ****************
+
+from openai import OpenAI
+from IPython.display import Markdown, display
+from agenttools import _exec_tool
+
+class Context:
+    def __init__(self, output_channel: str="stream", output_format: str="markdown"):
+        """
+        Context for the agents.
+        Args:
+            output_channel: The output channel for the agent. Options are "silent", "standard" (default), "stream"
+            output_format: The output format for the agent. Options are "plaintext" (default), "markdown"
+        """
+        self.output_channel = output_channel if output_channel in ["silent", "standard", "stream"] else "standard"
+        self.output_format = output_format if output_format in ["plaintext", "markdown"] else "plaintext"
+        self.team = []
+        self.conversation = []
+        self.current_agent = None
+
+    def _print(self, text: str):
+        if self.output_format == "markdown":
+            display(Markdown(f"---\n**{self.current_agent.name}**: {text}")) # type: ignore
+        else:
+            print(f"---\n[{self.current_agent.name}]: {text}") # type: ignore
+
+    def _stream(self, response):
+        result = ""
+        buffer = ""
+        for text in self.conversation:
+            if text["role"] == "assistant":
+                buffer += f"---\n**{text['agentname']}**: {text['content']}\n\n"
+        buffer += f"---\n**{self.current_agent.name}**: " # type: ignore
+        for chunk in response:
+            text = chunk.choices[0].delta
+            if hasattr(text, 'content') and text.content:
+                result += text.content
+                buffer += text.content
+                if self.output_format == "markdown":
+                    display(Markdown(buffer), clear=True)
+                else:
+                    print(text.content, end='', flush=True)
+        return result
+
+class MyAgent:
+    def __init__(self, name: str, context: Context,
+                 base_url: str="http://localhost:1234/v1",
+                 response_format: dict={}, tools: list=[],
+                 role_and_skills: str="", max_tokens: int=-1, temperature: float=0.7):
+        self.name = name
+        self.context = context
+        self.response_format = response_format
+        self.client = OpenAI(base_url=base_url)
+        self.role_and_skills = role_and_skills
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.tools = tools
+        self.tool_names = ", ".join([tool.__name__ for tool in tools])
+        self.tool_schemas = []
+        for tool in tools:
+            self.tool_schemas.append(parse_docstring_for_openai_tools(tool))
+        self.system_message = {"role": "system", "content": self.role_and_skills}
+        self.context.team.append(self)
+
+    def do(self, user_request: str=""):
+        self.context.current_agent = self # type: ignore
+        messages=[self.system_message]
+        if self.context.conversation:
+            messages += self.context.conversation
+        if user_request:
+            messages.append({"role": "user", "content": user_request})
+            self.context.conversation.append({"role": "user", "content": user_request})
+        response = self.client.chat.completions.create(
+            model="",
+            messages=messages, # type: ignore
+            max_tokens=self.max_tokens,
+            temperature=self.temperature,
+            stream=self.context.output_channel == "stream" and not self.tools,
+            **({"response_format": self.response_format} if self.response_format else {}), # type: ignore
+            tools=self.tool_schemas if self.tools else [] # type: ignore
+        )
+        if self.tool_schemas:
+            tool_call_result = _exec_tool(response)
+            result = tool_call_result["result"]
+            if self.context.output_channel != "silent": self.context._print(result)
+        else:
+            if self.context.output_channel == "stream":
+                result = self.context._stream(response)
+            else:
+                result = response.choices[0].message.content
+                if self.context.output_channel != "silent": self.context._print(result)
+        self.context.conversation.append({"role": "assistant", "agentname": self.name, "content": str(result)}) # str() to avoid JSON serialization issues
+
+
+
 # *************************************************************
 # Functions to parse docstrings and create OpenAI tool JSON ***
 # *************************************************************
@@ -261,93 +358,3 @@ def dataclass_to_openai_schema(cls):
     }
 
     return schema
-
-
-# ****************
-# Main classes ***
-# ****************
-
-from openai import OpenAI
-from IPython.display import Markdown, display
-from agenttools import _exec_tool
-
-class Context:
-    def __init__(self, output_channel: str="stream", output_format: str="markdown"):
-        self.output_channel = output_channel # output_channel cases: silent, standard, stream
-        self.output_format = output_format # output_format cases: plaintext, markdown
-        self.team = []
-        self.conversation = []
-        self.current_agent = None
-
-    def _print(self, text: str):
-        if self.output_format == "markdown":
-            display(Markdown(f"---\n**{self.current_agent.name}**: {text}")) # type: ignore
-        else:
-            print(f"---\n[{self.current_agent.name}]: {text}") # type: ignore
-
-    def _stream(self, response):
-        result = ""
-        buffer = ""
-        for text in self.conversation:
-            if text["role"] == "assistant":
-                buffer += f"---\n**{text['agentname']}**: {text['content']}\n\n"
-        buffer += f"---\n**{self.current_agent.name}**: " # type: ignore
-        for chunk in response:
-            text = chunk.choices[0].delta
-            if hasattr(text, 'content') and text.content:
-                result += text.content
-                buffer += text.content
-                if self.output_format == "markdown":
-                    display(Markdown(buffer), clear=True)
-                else:
-                    print(text.content, end='', flush=True)
-        return result
-
-class MyAgent:
-    def __init__(self, name: str, context: Context,
-                 base_url: str="http://localhost:1234/v1",
-                 response_format: dict={}, tools: list=[],
-                 role_and_skills: str="", max_tokens: int=-1, temperature: float=0.7):
-        self.name = name
-        self.context = context
-        self.response_format = response_format
-        self.client = OpenAI(base_url=base_url)
-        self.role_and_skills = role_and_skills
-        self.max_tokens = max_tokens
-        self.temperature = temperature
-        self.tools = tools
-        self.tool_names = ", ".join([tool.__name__ for tool in tools])
-        self.tool_schemas = []
-        for tool in tools:
-            self.tool_schemas.append(parse_docstring_for_openai_tools(tool))
-        self.system_message = {"role": "system", "content": self.role_and_skills}
-        self.context.team.append(self)
-
-    def do(self, user_request: str=""):
-        self.context.current_agent = self # type: ignore
-        messages=[self.system_message]
-        if self.context.conversation:
-            messages += self.context.conversation
-        if user_request:
-            messages.append({"role": "user", "content": user_request})
-            self.context.conversation.append({"role": "user", "content": user_request})
-        response = self.client.chat.completions.create(
-            model="",
-            messages=messages, # type: ignore
-            max_tokens=self.max_tokens,
-            temperature=self.temperature,
-            stream=self.context.output_channel == "stream" and not self.tools,
-            **({"response_format": self.response_format} if self.response_format else {}), # type: ignore
-            tools=self.tool_schemas if self.tools else [] # type: ignore
-        )
-        if self.tool_schemas:
-            tool_call_result = _exec_tool(response)
-            result = tool_call_result["result"]
-            if self.context.output_channel != "silent": self.context._print(result)
-        else:
-            if self.context.output_channel == "stream":
-                result = self.context._stream(response)
-            else:
-                result = response.choices[0].message.content
-                if self.context.output_channel != "silent": self.context._print(result)
-        self.context.conversation.append({"role": "assistant", "agentname": self.name, "content": str(result)}) # str() to avoid JSON serialization issues
