@@ -1,0 +1,1 @@
+openai markdown duckduckgo_search python-pptx beautifulsoup4
