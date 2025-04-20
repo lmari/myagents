@@ -271,12 +271,6 @@ from openai import OpenAI
 from IPython.display import Markdown, display
 from agenttools import _exec_tool
 
-def format_json(tool_schema: Dict[str, Any], indent: int = 2) -> str:
-    return json.dumps(tool_schema, indent=indent)
-
-base_url = "http://localhost:1234/v1"
-model = "gemma3:4b"
-
 class Context:
     def __init__(self, output_channel: str="stream", output_format: str="markdown"):
         self.output_channel = output_channel # output_channel cases: silent, standard, stream
@@ -311,14 +305,13 @@ class Context:
 
 class MyAgent:
     def __init__(self, name: str, context: Context,
-                 base_url: str=base_url, model: str=model,
+                 base_url: str="http://localhost:1234/v1",
                  response_format: dict={}, tools: list=[],
                  role_and_skills: str="", max_tokens: int=-1, temperature: float=0.7):
         self.name = name
         self.context = context
         self.response_format = response_format
         self.client = OpenAI(base_url=base_url)
-        self.model = model
         self.role_and_skills = role_and_skills
         self.max_tokens = max_tokens
         self.temperature = temperature
@@ -339,7 +332,7 @@ class MyAgent:
             messages.append({"role": "user", "content": user_request})
             self.context.conversation.append({"role": "user", "content": user_request})
         response = self.client.chat.completions.create(
-            model=self.model,
+            model="",
             messages=messages, # type: ignore
             max_tokens=self.max_tokens,
             temperature=self.temperature,
