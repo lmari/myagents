@@ -3,6 +3,14 @@ from typing import List, Optional
 from agents import dataclass_to_openai_schema
 
 @dataclass
+class DecimalNumber:
+    """ Un numero decimale."""
+    number: float = field(metadata={"description": "Un numero decimale"})
+    rounding: Optional[int] = field(metadata={"description": "Il numero di cifre decimali a cui arrotondare il numero dato."})
+
+decimal_number_schema = dataclass_to_openai_schema(DecimalNumber)
+
+@dataclass
 class Elenco:
     """ Un elenco di entità, indicate come stringhe."""
     elenco: List[str] = field(default_factory=list, metadata={
