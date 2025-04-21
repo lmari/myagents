@@ -14,11 +14,13 @@ class Context:
             output_channel: The output channel for the agent. Options are "silent", "standard" (default), "stream"
             output_format: The output format for the agent. Options are "plaintext" (default), "markdown"
         """
-        self.output_channel = output_channel if output_channel in ["silent", "standard", "stream"] else "standard"
-        self.output_format = output_format if output_format in ["plaintext", "markdown"] else "plaintext"
-        self.team = []
-        self.conversation = []
-        self.current_agent = None
+        self.output_channel: str = output_channel if output_channel in ["silent", "standard", "stream"] else "standard"
+        self.output_format: str = output_format if output_format in ["plaintext", "markdown"] else "plaintext"
+        self.team: list[MyAgent] = []
+        self.conversation: list[dict] = []
+        self.current_agent: MyAgent|None = None
+        self.last_tool_call_result: Any = None
+        self.last_result: Any = None
 
     def _print(self, text: str):
         if self.output_format == "markdown":
@@ -44,6 +46,13 @@ class Context:
                     print(text.content, end='', flush=True)
         return result
 
+    def _get_agent(self, name: str) -> 'MyAgent | None':
+        for agent in self.team:
+            if agent.name == name:
+                return agent
+        return None
+
+
 class MyAgent:
     def __init__(self, name: str, context: Context,
                  base_url: str="http://localhost:1234/v1",
@@ -65,8 +74,8 @@ class MyAgent:
         self.context.team.append(self)
 
     def do(self, user_request: str=""):
-        self.context.current_agent = self # type: ignore
-        messages=[self.system_message]
+        self.context.current_agent = self
+        messages = [self.system_message]
         if self.context.conversation:
             messages += self.context.conversation
         if user_request:
@@ -83,6 +92,7 @@ class MyAgent:
         )
         if self.tool_schemas:
             tool_call_result = _exec_tool(response)
+            self.context.last_tool_call_result = tool_call_result
             result = tool_call_result["result"]
             if self.context.output_channel != "silent": self.context._print(result)
         else:
@@ -91,7 +101,42 @@ class MyAgent:
             else:
                 result = response.choices[0].message.content
                 if self.context.output_channel != "silent": self.context._print(result)
+        self.context.last_result = result
         self.context.conversation.append({"role": "assistant", "agentname": self.name, "content": str(result)}) # str() to avoid JSON serialization issues
+
+
+class MyManager:
+    def __init__(self, name: str, context: Context):
+        self.name: str = name
+        self.context: Context = context
+
+    def sequence(self, requests: list) -> None:
+        for request in requests:
+            agent = self.context._get_agent(request[0])
+            if agent:
+                if len(request) == 2:
+                    if isinstance(request[1], str):
+                        agent.do(request[1])
+                    elif isinstance(request[1], list):
+                        for sub_request in request[1]:
+                            agent.do(sub_request)
+                elif len(request) == 3:
+                    if isinstance(request[2], dict):
+                        if "action" in request[2]:
+                            if request[2]["action"] == "loop":
+                                if "count" in request[2]:
+                                    for _ in range(request[2]["count"]):
+                                        agent.do(request[1])
+                                elif "data" in request[2]:
+                                    if isinstance(request[2]["data"], list):
+                                        for item in request[2]["data"]:
+                                            agent.do(request[1] + " " + str(item))
+                                    elif request[2]["data"] == "last_result":
+                                        if isinstance(self.context.last_result, list):
+                                            for item in self.context.last_result:
+                                                agent.do(request[1] + " " + str(item))
+                                        
+
 
 
 
