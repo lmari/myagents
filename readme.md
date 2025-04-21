@@ -1,12 +1,12 @@
 ## Un esempio (semplice e per scopo didattico) di framework per architetture multi-agente
 
-_Luca Mari, aprile 2025_
+_Luca Mari, 21 aprile 2025_
 
 Da installare:
 * (base) `openai` `markdown`
 * (strumenti) `duckduckgo_search` `python-pptx` `beautifulsoup4`
 
-Configurato per accedere a un modello di linguaggio accessibile via l'API di OpenAI con `base_url = "http://localhost:1234/v1"` all'endpoint `v1/chat/completions` (esposto per esempio da LM Studio).
+Configurato per funzionare con modelli di linguaggio nella situazione più semplice possibile, dunque accedendo a un modello accessibile via l'API di OpenAI con `base_url = "http://localhost:1234/v1"` all'endpoint `v1/chat/completions`, per come esposto da LM Studio.
 
 Lo scopo di questo framework è di essere il più semplice possibile, sia da usare per creare architetture multiagente (è solo necessario istanziare oggetti delle classi `Context` e `MyAgent`) sia da comprendere nella sua logica (le parti più complesse sono forse quelle per leggere le _docstrings_ delle funzioni da trattare come strumenti e per leggere le _dataclasses_ che specificano i formati di output, e creare i corrispondenti JSON in formato OpenAI: entrambe sono utili ma non rilevanti per comprendere la logica del framework).
 Dato questo obiettivo di semplicità, non c'è in pratica gestione degli errori, e richieste non corrette vengono solitamente ignorate.
