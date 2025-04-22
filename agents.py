@@ -1,7 +1,3 @@
-# ****************
-# Main classes ***
-# ****************
-
 from openai import OpenAI
 from IPython.display import Markdown, display
 from agenttools import _exec_tool
@@ -18,7 +14,7 @@ class Context:
         self.output_format: str = output_format if output_format in ["plaintext", "markdown"] else "plaintext"
         self.team: list[MyAgent] = []
         self.conversation: list[dict] = []
-        self.current_agent: MyAgent|None = None
+        self.current_agent: MyAgent|MyManager|None = None
         self.last_tool_call_result: Any = None
         self.last_result: Any = None
 
@@ -51,20 +47,27 @@ class Context:
             if agent.name == name:
                 return agent
         return None
+    
+    def _debug(self, text: str):
+        _text = f"DEBUG: {text}"
+        if self.output_format == "markdown":
+            display(Markdown(_text))
+        else:
+            print(_text)
+
 
 
 class MyAgent:
-    def __init__(self, name: str, context: Context,
-                 base_url: str="http://localhost:1234/v1",
-                 response_format: dict={}, tools: list=[],
-                 role_and_skills: str="", max_tokens: int=-1, temperature: float=0.7):
+    def __init__(self, name: str, context: Context, base_url: str="http://localhost:1234/v1",
+                 role_and_skills: str="", response_format: dict={}, tools: list=[],
+                 max_tokens: int=-1, temperature: float=0.7):
         self.name = name
         self.context = context
-        self.response_format = response_format
         self.client = OpenAI(base_url=base_url)
         self.role_and_skills = role_and_skills
         self.max_tokens = max_tokens
         self.temperature = temperature
+        self.response_format = response_format
         self.tools = tools
         self.tool_names = ", ".join([tool.__name__ for tool in tools])
         self.tool_schemas = []
@@ -73,14 +76,13 @@ class MyAgent:
         self.system_message = {"role": "system", "content": self.role_and_skills}
         self.context.team.append(self)
 
-    def do(self, user_request: str=""):
+    def do(self, user_request: str) -> None:
         self.context.current_agent = self
         messages = [self.system_message]
         if self.context.conversation:
             messages += self.context.conversation
-        if user_request:
-            messages.append({"role": "user", "content": user_request})
-            self.context.conversation.append({"role": "user", "content": user_request})
+        messages.append({"role": "user", "content": user_request})
+        self.context.conversation.append({"role": "user", "content": user_request})
         response = self.client.chat.completions.create(
             model="",
             messages=messages, # type: ignore
@@ -105,10 +107,12 @@ class MyAgent:
         self.context.conversation.append({"role": "assistant", "agentname": self.name, "content": str(result)}) # str() to avoid JSON serialization issues
 
 
-class MyManager:
-    def __init__(self, name: str, context: Context):
-        self.name: str = name
-        self.context: Context = context
+class MyManager(MyAgent):
+    def __init__(self, name: str, context: Context, base_url: str="http://localhost:1234/v1",
+                 role_and_skills: str="", response_format: dict={},
+                 max_tokens: int=-1, temperature: float=0.7):
+        tools = []
+        super().__init__(name, context, base_url, role_and_skills, response_format, tools, max_tokens, temperature)
 
     def sequence(self, requests: list) -> None:
         for request in requests:
@@ -135,8 +139,25 @@ class MyManager:
                                         if isinstance(self.context.last_result, list):
                                             for item in self.context.last_result:
                                                 agent.do(request[1] + " " + str(item))
-                                        
 
+    def round_robin(self, user_request: str, involved_agents: list, max_rounds: int=5) -> None:
+        stop_expression = "Sono soddisfatto"
+        self.system_message = {"role": "system", "content": self.role_and_skills + f"\nSe sei soddisfatto, scrivi '{stop_expression}'. Hai a disposizione un massimo di {max_rounds} interazioni per questo compito."}
+        messages = [self.system_message]
+        if self.context.conversation:
+            messages += self.context.conversation
+        request = user_request
+        for i in range(max_rounds):
+            for agent_name in involved_agents:
+                agent = self.context._get_agent(agent_name)
+                if agent:
+                    agent.do(request)
+                    request = self.context.last_result
+            self.system_message = {"role": "system", "content": self.role_and_skills + f"Solo se tu e i tuoi colleghi siete davvero soddisfatti del lavoro, scrivi '{stop_expression}'. Hai a disposizione ancora {max_rounds - i - 1} interazioni per questo compito."}
+            self.do(f"Solo se tu e i tuoi colleghi siete davvero soddisfatti del lavoro, scrivi '{stop_expression}. Altrimenti dai un breve suggerimento su come proseguire.")
+            request = self.context.last_result
+            if stop_expression in request:
+                break
 
 
 
@@ -145,8 +166,7 @@ class MyManager:
 # *************************************************************
 import inspect
 import re
-import json
-from typing import Any, Callable, Dict, List, Optional, Union, get_type_hints
+from typing import Any, Callable, Dict, List, get_type_hints
 
 def parse_docstring_for_openai_tools(func: Callable) -> Dict[str, Any]:
     """
@@ -313,93 +333,3 @@ def validate_openai_tool_schema(tool_schema: Dict[str, Any]) -> bool:
         return False
     
     return True
-
-
-# **************************************************************************
-# Functions to parse dataclasses and create OpenAI formatted output JSON ***
-# **************************************************************************
-import json
-from typing import get_type_hints, Union, get_args, get_origin, List, Optional
-from dataclasses import fields, is_dataclass
-
-def is_optional_type(t):
-    return get_origin(t) is Union and type(None) in get_args(t)
-
-def unwrap_optional(t):
-    if is_optional_type(t):
-        return [arg for arg in get_args(t) if arg is not type(None)][0]
-    return t
-    
-def python_type_to_openai(t, metadata=None):
-    origin = get_origin(t)
-    args = get_args(t)
-    metadata = metadata or {}
-
-    if is_optional_type(t):
-        return python_type_to_openai(unwrap_optional(t), metadata)
-
-    if origin in (list, List):
-        item_type = args[0] if args else str
-        schema = {
-            "type": "array",
-            "items": {
-                "type": python_type_to_openai(item_type)
-            }
-        }
-        for key in ["minItems", "maxItems", "uniqueItems"]:
-            if key in metadata:
-                schema[key] = metadata[key]
-        return schema
-
-    if t is str:
-        return "string"
-    elif t is int:
-        return "integer"
-    elif t is float:
-        return "number"
-    elif t is bool:
-        return "boolean"
-    elif is_dataclass(t):
-        return dataclass_to_openai_schema(t)
-    else:
-        return "string"
-
-def dataclass_to_openai_schema(cls):
-    props = {}
-    required = []
-
-    type_hints = get_type_hints(cls)
-
-    for f in fields(cls):
-        field_type = type_hints.get(f.name, str)
-        description = f.metadata.get("description", "")
-        json_type = python_type_to_openai(field_type, f.metadata)
-
-        if isinstance(json_type, str):
-            prop = {"type": json_type}
-        else:
-            prop = json_type
-
-        if description:
-            prop["description"] = description
-
-        props[f.name] = prop
-
-        # Only required if not Optional
-        if not is_optional_type(field_type):
-            required.append(f.name)
-
-    schema = {
-        "type": "json_schema",
-        "json_schema": {
-            "name": "risposta",
-            "strict": "true",
-            "schema": {
-                "type": "object",
-                "properties": props,
-                "required": required,
-            }
-        }
-    }
-
-    return schema
