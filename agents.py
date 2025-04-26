@@ -1,6 +1,6 @@
 from openai import OpenAI
 from IPython.display import Markdown, display
-from agenttools import _exec_tool
+from agenttools import _get_metadata, _exec_tool
 
 class Context:
     def __init__(self, output_channel: str="stream", output_format: str="markdown"):
@@ -14,56 +14,64 @@ class Context:
         self.output_format: str = output_format if output_format in ["plaintext", "markdown"] else "plaintext"
         self.team: list[MyAgent] = []
         self.conversation: list[dict] = []
+        self.buffer: str = ""
         self.current_agent: MyAgent|MyManager|None = None
-        self.last_tool_call_result: Any = None
-        self.last_result: Any = None
+        self.last_result = None
 
-    def _print(self, text: str):
-        if self.output_format == "markdown":
-            display(Markdown(f"---\n**{self.current_agent.name}**: {text}")) # type: ignore
-        else:
-            print(f"---\n[{self.current_agent.name}]: {text}") # type: ignore
-
-    def _stream(self, response):
-        result = ""
-        buffer = ""
-        for text in self.conversation:
-            if text["role"] == "assistant":
-                buffer += f"---\n**{text['agentname']}**: {text['content']}\n\n"
-        buffer += f"---\n**{self.current_agent.name}**: " # type: ignore
-        for chunk in response:
-            text = chunk.choices[0].delta
-            if hasattr(text, 'content') and text.content:
-                result += text.content
-                buffer += text.content
-                if self.output_format == "markdown":
-                    display(Markdown(buffer), clear=True)
-                else:
-                    print(text.content, end='', flush=True)
-        return result
-
-    def _get_agent(self, name: str) -> 'MyAgent | None':
+    def _get_agent_by_name(self, name: str) -> 'MyAgent | None':
         for agent in self.team:
             if agent.name == name:
                 return agent
         return None
     
-    def _debug(self, text: str):
-        _text = f"DEBUG: {text}"
+    def _get_current_agent_name(self) -> str:
+        return self.current_agent.name if self.current_agent else "Unknown"
+
+    def _get_formatted_agent_name(self, name: str) -> str:
+        return f"---\n**{name}**" if self.output_format == "markdown" else f"\n[{name}]"
+
+    def _print(self, text: str):
+        _text = f"{self._get_formatted_agent_name(self._get_current_agent_name())}: {text}"
+        self.buffer += _text
         if self.output_format == "markdown":
             display(Markdown(_text))
         else:
             print(_text)
 
+    def _debug(self, text: str):
+        _text = f"\n\n `DEBUG: {text}`"
+        self.buffer += _text
+        if self.output_format == "markdown":
+            display(Markdown(_text))
+        else:
+            print(_text)
+
+    def _stream(self, response):
+        result = ""
+        _text = "\n\n" + self._get_formatted_agent_name(self._get_current_agent_name()) + ": "
+        self.buffer += _text
+        if self.output_format == "plaintext": print(_text, end='', flush=True)
+        for chunk in response:
+            text = chunk.choices[0].delta
+            if hasattr(text, 'content') and text.content:
+                result += text.content
+                self.buffer += text.content
+                if self.output_format == "markdown":
+                    display(Markdown(self.buffer), clear=True)
+                else:
+                    print(text.content, end='', flush=True)
+        return result
+
 
 
 class MyAgent:
     def __init__(self, name: str, context: Context, base_url: str="http://localhost:1234/v1",
-                 role_and_skills: str="", response_format: dict={}, tools: list=[],
+                 model: str="", role_and_skills: str="", response_format: dict={}, tools: list=[],
                  max_tokens: int=-1, temperature: float=0.7):
-        self.name = name
+        self.name: str = name
         self.context = context
         self.client = OpenAI(base_url=base_url)
+        self.model = model
         self.role_and_skills = role_and_skills
         self.max_tokens = max_tokens
         self.temperature = temperature
@@ -72,51 +80,80 @@ class MyAgent:
         self.tool_names = ", ".join([tool.__name__ for tool in tools])
         self.tool_schemas = []
         for tool in tools:
-            self.tool_schemas.append(parse_docstring_for_openai_tools(tool))
+            self.tool_schemas.append(_get_metadata(tool))
         self.system_message = {"role": "system", "content": self.role_and_skills}
         self.context.team.append(self)
 
-    def do(self, user_request: str) -> None:
+    def do(self, user_request: str, expanded_tool_response: bool=False, debug: bool=False) -> None:
         self.context.current_agent = self
         messages = [self.system_message]
         if self.context.conversation:
             messages += self.context.conversation
         messages.append({"role": "user", "content": user_request})
         self.context.conversation.append({"role": "user", "content": user_request})
+        if debug: self.context._debug(f"[messages in user request] {messages}")
         response = self.client.chat.completions.create(
-            model="",
+            model=self.model,
             messages=messages, # type: ignore
             max_tokens=self.max_tokens,
             temperature=self.temperature,
             stream=self.context.output_channel == "stream" and not self.tools,
             **({"response_format": self.response_format} if self.response_format else {}), # type: ignore
-            tools=self.tool_schemas if self.tools else [] # type: ignore
+            tools=self.tool_schemas if self.tools else None # type: ignore
         )
         if self.tool_schemas:
+            if debug: self.context._debug(f"[response about function call] {response.choices[0].message.tool_calls}")
             tool_call_result = _exec_tool(response)
-            self.context.last_tool_call_result = tool_call_result
-            result = tool_call_result["result"]
-            if self.context.output_channel != "silent": self.context._print(result)
+            if not tool_call_result["correct"]:
+                result = tool_call_result["result"]
+            else:
+                if not expanded_tool_response:
+                    result = [result_dict["result"] for result_dict in tool_call_result["result"]]
+                else:
+                    messages2 = messages.copy()
+                    messages2.append({
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": tool_call.id,
+                                "type": tool_call.type,
+                                "function": tool_call.function,
+                            } for tool_call in response.choices[0].message.tool_calls
+                        ] # type: ignore
+                    })
+                    messages2 += tool_call_result["for_completion_messages"]
+                    if debug: self.context._debug(f"[messages in function call] {messages2}")
+                    response2 = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=messages2,
+                        max_tokens=self.max_tokens,
+                        temperature=self.temperature,
+                        stream=False,
+                        **({"response_format": self.response_format} if self.response_format else {}), # type: ignore
+                        tools=self.tool_schemas
+                    )
+                    result = response2.choices[0].message.content
+            if self.context.output_channel != "silent": self.context._print(result) # type: ignore
         else:
             if self.context.output_channel == "stream":
                 result = self.context._stream(response)
             else:
                 result = response.choices[0].message.content
                 if self.context.output_channel != "silent": self.context._print(result)
-        self.context.last_result = result
+        self.context.last_result = result # type: ignore
         self.context.conversation.append({"role": "assistant", "agentname": self.name, "content": str(result)}) # str() to avoid JSON serialization issues
 
 
 class MyManager(MyAgent):
     def __init__(self, name: str, context: Context, base_url: str="http://localhost:1234/v1",
-                 role_and_skills: str="", response_format: dict={},
+                 model: str="", role_and_skills: str="", response_format: dict={},
                  max_tokens: int=-1, temperature: float=0.7):
         tools = []
-        super().__init__(name, context, base_url, role_and_skills, response_format, tools, max_tokens, temperature)
+        super().__init__(name, context, base_url, model, role_and_skills, response_format, tools, max_tokens, temperature)
 
     def sequence(self, requests: list) -> None:
         for request in requests:
-            agent = self.context._get_agent(request[0])
+            agent = self.context._get_agent_by_name(request[0])
             if agent:
                 if len(request) == 2:
                     if isinstance(request[1], str):
@@ -137,7 +174,7 @@ class MyManager(MyAgent):
                                             agent.do(request[1] + " " + str(item))
                                     elif request[2]["data"] == "last_result":
                                         if isinstance(self.context.last_result, list):
-                                            for item in self.context.last_result:
+                                            for item in self.context.last_result: # type: ignore
                                                 agent.do(request[1] + " " + str(item))
 
     def round_robin(self, user_request: str, involved_agents: list, max_rounds: int=5) -> None:
@@ -149,187 +186,12 @@ class MyManager(MyAgent):
         request = user_request
         for i in range(max_rounds):
             for agent_name in involved_agents:
-                agent = self.context._get_agent(agent_name)
+                agent = self.context._get_agent_by_name(agent_name)
                 if agent:
-                    agent.do(request)
+                    agent.do(request) # type: ignore
                     request = self.context.last_result
             self.system_message = {"role": "system", "content": self.role_and_skills + f"Solo se tu e i tuoi colleghi siete davvero soddisfatti del lavoro, scrivi '{stop_expression}'. Hai a disposizione ancora {max_rounds - i - 1} interazioni per questo compito."}
             self.do(f"Solo se tu e i tuoi colleghi siete davvero soddisfatti del lavoro, scrivi '{stop_expression}. Altrimenti dai un breve suggerimento su come proseguire.")
             request = self.context.last_result
-            if stop_expression in request:
+            if stop_expression in request: # type: ignore
                 break
-
-
-
-# *************************************************************
-# Functions to parse docstrings and create OpenAI tool JSON ***
-# *************************************************************
-import inspect
-import re
-from typing import Any, Callable, Dict, List, get_type_hints
-
-def parse_docstring_for_openai_tools(func: Callable) -> Dict[str, Any]:
-    """
-    Parse a function's docstring and signature to generate an OpenAI tool schema.
-    
-    This function extracts information from the docstring and function signature
-    to create a schema compatible with OpenAI's tool calling API format.
-    
-    Args:
-        func: The function to parse for OpenAI tool calling
-        
-    Returns:
-        A dictionary formatted according to OpenAI's tool definition schema
-    """
-    # Get the function's docstring and parse it
-    docstring = inspect.getdoc(func) or ""
-    
-    # Extract basic information
-    description_match = re.search(r"(.*?)(?:\n\s*\n|\n\s*Args:|\n\s*Parameters:|\Z)", docstring, re.DOTALL)
-    description = description_match.group(1).strip() if description_match else ""
-    
-    # Get parameter information from docstring
-    params_match = re.search(r"(?:Args|Parameters):(.*?)(?:\n\s*\n|\n\s*Returns:|\n\s*Raises:|\Z)", docstring, re.DOTALL)
-    params_text = params_match.group(1) if params_match else ""
-    
-    # Parse parameters
-    param_descriptions = {}
-    if params_text:
-        param_matches = re.findall(r'\s*[-*]?\s*(\w+)(?:\s*\(([^)]+)\))?:\s*(.*?)(?=\s*\n\s*[-*]?\s*\w+:|$)', params_text, re.DOTALL)
-        for name, type_hint, desc in param_matches:
-            param_descriptions[name] = {
-                "description": desc.strip(),
-                "type_hint": type_hint.strip() if type_hint else None
-            }
-    
-    # Get return information
-    returns_match = re.search(r"Returns:(.*?)(?:\n\s*\n|\n\s*Raises:|\Z)", docstring, re.DOTALL)
-    returns_desc = returns_match.group(1).strip() if returns_match else ""
-    
-    # Get function signature
-    sig = inspect.signature(func)
-    type_hints = get_type_hints(func)
-    
-    # Build parameters schema for OpenAI format
-    parameters = {
-        "type": "object",
-        "properties": {},
-        "required": []
-    }
-    
-    # Process each parameter
-    for param_name, param in sig.parameters.items():
-        # Skip self, cls, and *args, **kwargs
-        if param_name in ('self', 'cls') or param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-            continue
-        
-        # Get parameter type
-        param_type = type_hints.get(param_name, None)
-        
-        # Get parameter description from docstring
-        param_info = param_descriptions.get(param_name, {"description": "", "type_hint": None})
-        
-        # Create parameter schema
-        param_schema = {"description": param_info["description"]}
-        
-        # Determine parameter type for schema
-        if param_type:
-            if param_type is str:
-                param_schema["type"] = "string"
-            elif param_type is int:
-                param_schema["type"] = "integer"
-            elif param_type is float:
-                param_schema["type"] = "number"
-            elif param_type is bool:
-                param_schema["type"] = "boolean"
-            elif param_type is list or param_type.__origin__ is list if hasattr(param_type, "__origin__") else False:
-                param_schema["type"] = "array"
-                # Try to get item type if available
-                if hasattr(param_type, "__args__") and param_type.__args__: # type: ignore
-                    item_type = param_type.__args__[0] # type: ignore
-                    if item_type is str:
-                        param_schema["items"] = {"type": "string"}
-                    elif item_type is int:
-                        param_schema["items"] = {"type": "integer"}
-                    elif item_type is float:
-                        param_schema["items"] = {"type": "number"}
-                    elif item_type is bool:
-                        param_schema["items"] = {"type": "boolean"}
-                    else:
-                        param_schema["items"] = {"type": "object"}
-            elif param_type is dict or param_type.__origin__ is dict if hasattr(param_type, "__origin__") else False:
-                param_schema["type"] = "object"
-            else:
-                param_schema["type"] = "object"
-        else:
-            # Default to string if no type hint is available
-            param_schema["type"] = "string"
-        
-        # Add enum if mentioned in docstring
-        enum_match = re.search(r"(?:one of|values):\s*\[(.*?)\]", param_info["description"], re.IGNORECASE)
-        if enum_match:
-            try:
-                # Try to parse the enum values from the description
-                enum_values = [x.strip().strip("'\"") for x in enum_match.group(1).split(",")]
-                if enum_values:
-                    param_schema["enum"] = enum_values
-            except:
-                pass
-        
-        # Add parameter to properties
-        parameters["properties"][param_name] = param_schema
-        
-        # Check if parameter is required
-        if param.default is inspect.Parameter.empty:
-            parameters["required"].append(param_name)
-    
-    # Create the final OpenAI tool schema
-    tool_schema = {
-        "type": "function",
-        "function": {
-            "name": func.__name__,
-            "description": description,
-            "parameters": parameters
-        }
-    }
-    
-    # Add return type if available
-    if "return" in type_hints:
-        return_type = type_hints["return"]
-        tool_schema["function"]["return_type"] = str(return_type.__name__ if hasattr(return_type, "__name__") else return_type)
-    
-    return tool_schema
-
-def create_openai_tools_from_functions(functions: List[Callable]) -> List[Dict[str, Any]]:
-    tools = []
-    for func in functions:
-        tool_schema = parse_docstring_for_openai_tools(func)
-        tools.append(tool_schema)
-    return tools
-
-def validate_openai_tool_schema(tool_schema: Dict[str, Any]) -> bool:
-    if not isinstance(tool_schema, dict):
-        return False
-    if "type" not in tool_schema or tool_schema["type"] != "function":
-        return False
-    if "function" not in tool_schema or not isinstance(tool_schema["function"], dict):
-        return False
-    
-    function = tool_schema["function"]
-    if "name" not in function or not isinstance(function["name"], str):
-        return False
-    if "description" not in function or not isinstance(function["description"], str):
-        return False
-    if "parameters" not in function or not isinstance(function["parameters"], dict):
-        return False
-    
-    params = function["parameters"]
-    if "type" not in params or params["type"] != "object":
-        return False
-    if "properties" not in params or not isinstance(params["properties"], dict):
-        return False
-    
-    if "required" in params and not isinstance(params["required"], list):
-        return False
-    
-    return True
