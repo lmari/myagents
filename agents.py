@@ -95,7 +95,7 @@ class MyAgent:
         """
         self.name: str = name
         self.context = context
-        self.client = OpenAI(base_url=base_url)
+        self.client = OpenAI(base_url=base_url, api_key="LMStudio")
         self.model = model
         self.role_and_skills = role_and_skills
         self.max_tokens = max_tokens

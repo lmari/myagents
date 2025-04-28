@@ -3,7 +3,7 @@
 _Luca Mari, 28 aprile 2025_
 
 > Da installare:
-> * (uso di base) `openai` `markdown`
+> * (uso di base) `openai` `openai_functools` `markdown`
 > * (per accesso a strumenti) `duckduckgo_search` `python-pptx` `beautifulsoup4`
 >
 > Configurato per funzionare con modelli di linguaggio nella situazione più semplice possibile, dunque accedendo a un modello accessibile via l'API di OpenAI con `base_url = "http://localhost:1234/v1"` all'endpoint `v1/chat/completions`, per come esposto per esempio da LM Studio oppure Ollama.
