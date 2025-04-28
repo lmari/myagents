@@ -1,6 +1,6 @@
 ## Un esempio (semplice e per scopo didattico) di framework per architetture multi-agente
 
-_Luca Mari, 26 aprile 2025_
+_Luca Mari, 28 aprile 2025_
 
 > Da installare:
 > * (uso di base) `openai` `markdown`
@@ -31,5 +31,7 @@ Gli esempi di uso di questo framework sono nei notebook `agents*.ipynb`, e sono 
 * `agents3.ipynb`: esempi di "orchestrazione flessibile", con un agente manager che controlla le chiamate agli altri agenti.
 
 ---
+
+28 aprile: Refactoring vario; gestione di chiamate ripetute a funzioni in una stessa richiesta al modello 
 
 26 aprile: Refactoring vario; gestione del debug

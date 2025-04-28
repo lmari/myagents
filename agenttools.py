@@ -1,11 +1,9 @@
 from openai_functools import openai_function
 import json
 
-def _get_metadata(fun) -> dict:
-    """
-    Genera i metadati per la funzione specificata.
-    """
-    return {'type': 'function', 'function': fun.openai_metadata }
+def _get_tool_metadata(tool) -> dict:
+    """ Genera i metadati per la funzione specificata. """
+    return {'type': 'function', 'function': tool.openai_metadata }
 
 def _exec_tool(response) -> dict:
     """
@@ -51,8 +49,9 @@ def _exec_tool(response) -> dict:
     return result
 
 
-    
-# ***************************************************************************
+# *********************
+# Exemplary classes ***
+# *********************
 
 import os
 

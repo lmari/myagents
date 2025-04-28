@@ -1,6 +1,7 @@
 from openai import OpenAI
 from IPython.display import Markdown, display
-from agenttools import _get_metadata, _exec_tool
+from agentformats import _get_format_metadata
+from agenttools import _get_tool_metadata, _exec_tool
 
 class Context:
     def __init__(self, output_channel: str="stream", output_format: str="markdown"):
@@ -80,7 +81,7 @@ class MyAgent:
         self.tool_names = ", ".join([tool.__name__ for tool in tools])
         self.tool_schemas = []
         for tool in tools:
-            self.tool_schemas.append(_get_metadata(tool))
+            self.tool_schemas.append(_get_tool_metadata(tool))
         self.system_message = {"role": "system", "content": self.role_and_skills}
         self.context.team.append(self)
 
@@ -109,6 +110,7 @@ class MyAgent:
             else:
                 if not expanded_tool_response:
                     result = [result_dict["result"] for result_dict in tool_call_result["result"]]
+                    if len(result) == 1: result = result[0] # per evitare di restituire una lista con un solo elemento
                 else:
                     messages2 = messages.copy()
                     messages2.append({
