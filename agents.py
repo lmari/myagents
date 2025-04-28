@@ -1,4 +1,7 @@
 from openai import OpenAI
+from typing import Type
+from pydantic import BaseModel
+import json
 from IPython.display import Markdown, display
 from agentformats import _get_format_metadata
 from agenttools import _get_tool_metadata, _exec_tool
@@ -6,7 +9,8 @@ from agenttools import _get_tool_metadata, _exec_tool
 class Context:
     def __init__(self, output_channel: str="stream", output_format: str="markdown"):
         """
-        Context for the agents.
+        Context for the agents, in particular maintaining the information on the team of involved agents
+        and the memory of their conversation.
         Args:
             output_channel: The output channel for the agent. Options are "silent", "standard" (default), "stream"
             output_format: The output format for the agent. Options are "plaintext" (default), "markdown"
@@ -47,6 +51,14 @@ class Context:
         else:
             print(_text)
 
+    def _validate(self, text: str):
+        _text = f"\n\n `VALIDATE: {text}`"
+        self.buffer += _text
+        if self.output_format == "markdown":
+            display(Markdown(_text))
+        else:
+            print(_text)
+
     def _stream(self, response):
         result = ""
         _text = "\n\n" + self._get_formatted_agent_name(self._get_current_agent_name()) + ": "
@@ -64,11 +76,23 @@ class Context:
         return result
 
 
-
 class MyAgent:
     def __init__(self, name: str, context: Context, base_url: str="http://localhost:1234/v1",
-                 model: str="", role_and_skills: str="", response_format: dict={}, tools: list=[],
+                 model: str="", role_and_skills: str="", response_format: Type[BaseModel]|None=None, tools: list=[],
                  max_tokens: int=-1, temperature: float=0.7):
+        """
+        Basic agent for OpenAI API.
+        Args:
+            name: The name of the agent
+            context: The context for the agent
+            base_url: The base URL for the OpenAI API (default is localhost:1234, as used by LM Studio)
+            model: The model to use for the agent (optional for LM Studio)
+            role_and_skills: The role and skills of the agent, for setting its system message
+            response_format: The optional response format for the agent
+            tools: The optional list of tools to use for the agent
+            max_tokens: The maximum number of tokens to generate
+            temperature: The temperature to use for the agent
+        """
         self.name: str = name
         self.context = context
         self.client = OpenAI(base_url=base_url)
@@ -85,8 +109,10 @@ class MyAgent:
         self.system_message = {"role": "system", "content": self.role_and_skills}
         self.context.team.append(self)
 
-    def do(self, user_request: str, expanded_tool_response: bool=False, debug: bool=False) -> None:
+    def do(self, user_request: str, response_format: Type[BaseModel]|None=None, validate: bool=False,
+           expanded_tool_response: bool=False, debug: bool=False) -> None:
         self.context.current_agent = self
+        local_response_format = response_format if response_format else self.response_format
         messages = [self.system_message]
         if self.context.conversation:
             messages += self.context.conversation
@@ -99,10 +125,11 @@ class MyAgent:
             max_tokens=self.max_tokens,
             temperature=self.temperature,
             stream=self.context.output_channel == "stream" and not self.tools,
-            **({"response_format": self.response_format} if self.response_format else {}), # type: ignore
+            **({"response_format": _get_format_metadata(local_response_format)} if local_response_format else {}), # type: ignore
             tools=self.tool_schemas if self.tools else None # type: ignore
         )
-        if self.tool_schemas:
+
+        if self.tool_schemas: # gestione della chiamata a strumenti
             if debug: self.context._debug(f"[response about function call] {response.choices[0].message.tool_calls}")
             tool_call_result = _exec_tool(response)
             if not tool_call_result["correct"]:
@@ -142,13 +169,21 @@ class MyAgent:
             else:
                 result = response.choices[0].message.content
                 if self.context.output_channel != "silent": self.context._print(result)
+        
+        if local_response_format and validate:
+            try:
+                local_response_format.model_validate(json.loads(result)) # type: ignore
+                self.context._validate(f"Response valid!")
+            except Exception as e:
+                self.context._validate(f"Response format error: {e}")
+
         self.context.last_result = result # type: ignore
         self.context.conversation.append({"role": "assistant", "agentname": self.name, "content": str(result)}) # str() to avoid JSON serialization issues
 
 
 class MyManager(MyAgent):
     def __init__(self, name: str, context: Context, base_url: str="http://localhost:1234/v1",
-                 model: str="", role_and_skills: str="", response_format: dict={},
+                 model: str="", role_and_skills: str="", response_format: Type[BaseModel]|None=None,
                  max_tokens: int=-1, temperature: float=0.7):
         tools = []
         super().__init__(name, context, base_url, model, role_and_skills, response_format, tools, max_tokens, temperature)

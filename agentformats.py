@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
-from typing import List, Tuple, Optional
+from typing import Type, List, Tuple, Optional
 
-def _get_format_metadata(format) -> dict:
+def _get_format_metadata(format: Type[BaseModel]|None=None) -> dict:
     """ Genera i metadati per il formato specificato. """
     return {
         "type": "json_schema",
@@ -9,7 +9,7 @@ def _get_format_metadata(format) -> dict:
             "schema": format.model_json_schema(),
             "strict": True
         }
-    }
+    } if format else {}
 
 
 # *********************
@@ -20,12 +20,10 @@ class DecimalNumber(BaseModel):
     """ A decimal number."""
     number: float = Field(..., description="A decimal number.")
     rounding: Optional[int] = Field(2, description="The number of digits to which the given number must be rounded.")
-decimal_number_schema = _get_format_metadata(DecimalNumber)
 
 class List_(BaseModel):
     """ A list of entities, as strings."""
-    list: List[str] = Field(..., description="A list of entities, where each is a string.")
-list_schema = _get_format_metadata(List_)
+    list: List[str] = Field(..., description="A list of entities, where each entity is a string.")
 
 '''
 class ActionList:

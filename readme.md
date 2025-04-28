@@ -12,7 +12,7 @@ Questo framework mira a essere il più semplice possibile (è solo necessario is
 
 Il nucleo del framework è la classe `MyAgent`, con un solo metodo `do()`, e in grado di gestire:
 * output standard o in streaming (`Context.output_channel`), con testo non formattato o markdown (`Context.output_format`);
-* output strutturato (_structured output_: https://platform.openai.com/docs/guides/structured-outputs) via `@dataclass`: vedi gli esempi in `agentformats.py`, dove aggiungere nuove classi;
+* output strutturato (_structured output_: https://platform.openai.com/docs/guides/structured-outputs), per l'agente o le singole richieste: vedi gli esempi in `agentformats.py`, dove aggiungere nuove classi;
 * la chiamata a funzioni (_function calling_: https://platform.openai.com/docs/guides/function-calling, in accordo all'endpoint `Chat Completion`): vedi gli esempi in `agenttools.py`, dove aggiungere nuove funzioni.
 
 La classe `MyManager`, che eredita da `MyAgent` (i manager sono anch'essi agenti...) gestisce:
@@ -32,6 +32,6 @@ Gli esempi di uso di questo framework sono nei notebook `agents*.ipynb`, e sono 
 
 ---
 
-28 aprile: Refactoring vario; gestione di chiamate ripetute a funzioni in una stessa richiesta al modello 
+28 aprile: refactoring vario; gestione dell'overriding della specifica di output strutturato; gestione della validazione del formato della risposta nel caso di output strutturato; gestione di chiamate ripetute a funzioni in una stessa richiesta al modello 
 
-26 aprile: Refactoring vario; gestione del debug
+26 aprile: refactoring vario; gestione del debug
