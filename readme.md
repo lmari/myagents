@@ -1,6 +1,6 @@
 ## Un esempio (semplice e per scopo didattico) di framework per architetture multi-agente
 
-_Luca Mari, 28 aprile 2025_
+_Luca Mari, 29 aprile 2025_
 
 > Da installare:
 > * (uso di base) `openai` `openai_functools` `markdown`
@@ -32,6 +32,8 @@ Gli esempi di uso di questo framework sono nei notebook `agents*.ipynb`, e sono 
 
 ---
 
-28 aprile: refactoring vario; gestione dell'overriding della specifica di output strutturato; gestione della validazione del formato della risposta nel caso di output strutturato; gestione di chiamate ripetute a funzioni in una stessa richiesta al modello 
+29 aprile: migliorata la gestione dei parametri di default per la connessione a un modello locale; refactoring vario
 
-26 aprile: refactoring vario; gestione del debug
+28 aprile: gestione dell'overriding della specifica di output strutturato; gestione della validazione del formato della risposta nel caso di output strutturato; gestione di chiamate ripetute a funzioni in una stessa richiesta al modello; refactoring vario
+
+26 aprile: gestione del debug; refactoring vario

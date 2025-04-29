@@ -1,5 +1,6 @@
+import default
 from openai import OpenAI
-from typing import Type
+from typing import Type, Any
 from pydantic import BaseModel
 import json
 from IPython.display import Markdown, display
@@ -21,7 +22,7 @@ class Context:
         self.conversation: list[dict] = []
         self.buffer: str = ""
         self.current_agent: MyAgent|MyManager|None = None
-        self.last_result = None
+        self.last_result: Any|None = None
 
     def _get_agent_by_name(self, name: str) -> 'MyAgent | None':
         for agent in self.team:
@@ -77,8 +78,8 @@ class Context:
 
 
 class MyAgent:
-    def __init__(self, name: str, context: Context, base_url: str="http://localhost:1234/v1",
-                 model: str="", role_and_skills: str="", response_format: Type[BaseModel]|None=None, tools: list=[],
+    def __init__(self, name: str, context: Context, base_url: str=default.base_url,
+                 model: str=default.model, role_and_skills: str="", response_format: Type[BaseModel]|None=None, tools: list=[],
                  max_tokens: int=-1, temperature: float=0.7):
         """
         Basic agent for OpenAI API.
@@ -95,7 +96,7 @@ class MyAgent:
         """
         self.name: str = name
         self.context = context
-        self.client = OpenAI(base_url=base_url, api_key="LMStudio")
+        self.client = OpenAI(base_url=base_url, api_key=default.api_key)
         self.model = model
         self.role_and_skills = role_and_skills
         self.max_tokens = max_tokens
@@ -111,6 +112,15 @@ class MyAgent:
 
     def do(self, user_request: str, response_format: Type[BaseModel]|None=None, validate: bool=False,
            expanded_tool_response: bool=False, debug: bool=False) -> None:
+        """
+        Send the given user request to the agent and get a response.
+        Args:
+            user_request: The user request for the agent
+            response_format: The optional response format for the agent
+            validate: Whether to validate the response format
+            expanded_tool_response: Whether to use expanded tool response
+            debug: Whether to print debug information
+        """
         self.context.current_agent = self
         local_response_format = response_format if response_format else self.response_format
         messages = [self.system_message]
@@ -129,7 +139,7 @@ class MyAgent:
             tools=self.tool_schemas if self.tools else None # type: ignore
         )
 
-        if self.tool_schemas: # gestione della chiamata a strumenti
+        if self.tool_schemas: # handling function calls
             if debug: self.context._debug(f"[response about function call] {response.choices[0].message.tool_calls}")
             tool_call_result = _exec_tool(response)
             if not tool_call_result["correct"]:
@@ -170,49 +180,54 @@ class MyAgent:
                 result = response.choices[0].message.content
                 if self.context.output_channel != "silent": self.context._print(result)
         
-        if local_response_format and validate:
+        if local_response_format and validate: # handling validation in the case of structured output
             try:
                 local_response_format.model_validate(json.loads(result)) # type: ignore
                 self.context._validate(f"Response valid!")
             except Exception as e:
                 self.context._validate(f"Response format error: {e}")
 
-        self.context.last_result = result # type: ignore
+        self.context.last_result = result
         self.context.conversation.append({"role": "assistant", "agentname": self.name, "content": str(result)}) # str() to avoid JSON serialization issues
 
 
 class MyManager(MyAgent):
-    def __init__(self, name: str, context: Context, base_url: str="http://localhost:1234/v1",
-                 model: str="", role_and_skills: str="", response_format: Type[BaseModel]|None=None,
+    def __init__(self, name: str, context: Context, base_url: str=default.base_url,
+                 model: str=default.model, role_and_skills: str="", response_format: Type[BaseModel]|None=None,
                  max_tokens: int=-1, temperature: float=0.7):
         tools = []
         super().__init__(name, context, base_url, model, role_and_skills, response_format, tools, max_tokens, temperature)
 
-    def sequence(self, requests: list) -> None:
-        for request in requests:
-            agent = self.context._get_agent_by_name(request[0])
+    def sequence(self, actions: list) -> None:
+        for action in actions:
+            agent = self.context._get_agent_by_name(action[0]) # each action is addressed to an agent
             if agent:
-                if len(request) == 2:
-                    if isinstance(request[1], str):
-                        agent.do(request[1])
-                    elif isinstance(request[1], list):
-                        for sub_request in request[1]:
+                if len(action) == 2:
+                    if isinstance(action[1], str): # action of the form (agent, request)
+                        agent.do(action[1])
+                    elif isinstance(action[1], list): # action of the form (agent, [requests])
+                        for sub_request in action[1]:
                             agent.do(sub_request)
-                elif len(request) == 3:
-                    if isinstance(request[2], dict):
-                        if "action" in request[2]:
-                            if request[2]["action"] == "loop":
-                                if "count" in request[2]:
-                                    for _ in range(request[2]["count"]):
-                                        agent.do(request[1])
-                                elif "data" in request[2]:
-                                    if isinstance(request[2]["data"], list):
-                                        for item in request[2]["data"]:
-                                            agent.do(request[1] + " " + str(item))
-                                    elif request[2]["data"] == "last_result":
-                                        if isinstance(self.context.last_result, list):
-                                            for item in self.context.last_result: # type: ignore
-                                                agent.do(request[1] + " " + str(item))
+                elif len(action) == 3:
+                    if isinstance(action[2], dict):
+                        if "action" in action[2]:
+                            if action[2]["action"] == "loop":
+                                if "count" in action[2]: # action of the form (agent, request, {"action": "loop", "count": n})
+                                    for _ in range(action[2]["count"]):
+                                        agent.do(action[1])
+                                elif "data" in action[2]:
+                                    if isinstance(action[2]["data"], list): # action of the form (agent, request, {"action": "loop", "data": [data]})
+                                        for item in action[2]["data"]:
+                                            agent.do(action[1] + " " + str(item))
+                                    elif action[2]["data"] == "last_result": # action of the form (agent, request, {"action": "loop", "data": "last_result"})
+                                        try:
+                                            import ast
+                                            last_result = ast.literal_eval(self.context.last_result) # type: ignore
+                                            if isinstance(last_result, list):
+                                                for item in last_result:
+                                                    agent.do(action[1] + " " + str(item))
+                                        except Exception as e:
+                                            pass
 
     def round_robin(self, user_request: str, involved_agents: list, max_rounds: int=5) -> None:
         stop_expression = "Sono soddisfatto"
