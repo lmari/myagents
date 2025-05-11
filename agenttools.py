@@ -138,15 +138,18 @@ def generate_random_number(min_value: float, max_value: float) -> float:
 # ***************************************************************************
 
 from datetime import datetime
+import pytz
 
 @openai_function
-def get_current_time() -> datetime:
+def get_current_day_and_time(zone: str="Europe/Rome") -> datetime:
     """
-    Restituisce l'ora e il minuto corrente.
+    Restituisce la data e l'orario corrente nella zona specificata, o in Italia se non specificato.
+    Args:
+        zone: La zona di interesse (Italiana se non specificata)
     Returns:
-        L'ora e il minuto corrente
+        La data e l'orario corrente
     """
-    return datetime.now()
+    return datetime.now(pytz.timezone(zone))
 
 # ***************************************************************************
 

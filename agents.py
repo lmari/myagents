@@ -23,6 +23,7 @@ class Context:
         self.buffer: str = ""
         self.current_agent: MyAgent|MyManager|None = None
         self.last_result: Any|None = None
+        self.last_tool_call: Any|None = None
 
     def _get_agent_by_name(self, name: str) -> 'MyAgent | None':
         for agent in self.team:
@@ -86,7 +87,7 @@ class MyAgent:
         Args:
             name: The name of the agent
             context: The context for the agent
-            base_url: The base URL for the OpenAI API (default is localhost:1234, as used by LM Studio)
+            base_url: The base URL for the OpenAI API (default is 'http://localhost:1234', as used by LM Studio)
             model: The model to use for the agent (optional for LM Studio)
             role_and_skills: The role and skills of the agent, for setting its system message
             response_format: The optional response format for the agent
@@ -111,14 +112,14 @@ class MyAgent:
         self.context.team.append(self)
 
     def do(self, user_request: str, response_format: Type[BaseModel]|None=None, validate: bool=False,
-           expanded_tool_response: bool=False, debug: bool=False) -> None:
+           tool_handling: str="standard", debug: bool=False) -> None:
         """
         Send the given user request to the agent and get a response.
         Args:
             user_request: The user request for the agent
             response_format: The optional response format for the agent
             validate: Whether to validate the response format
-            expanded_tool_response: Whether to use expanded tool response
+            tool_handling: The response is the tool schema if "schema", the tool exec output if "standard" (default), the further model call if "expanded"
             debug: Whether to print debug information
         """
         self.context.current_agent = self
@@ -141,11 +142,21 @@ class MyAgent:
 
         if self.tool_schemas: # handling function calls
             if debug: self.context._debug(f"[response about function call] {response.choices[0].message.tool_calls}")
+
+            self.context.last_tool_call = response.choices[0].message.tool_calls
+            if tool_handling == "schema":
+                result = response.choices[0].message.tool_calls
+                if len(result) == 1: result = result[0] # per evitare di restituire una lista con un solo elemento
+                self.context.last_result = result
+                self.context.conversation.append({"role": "assistant", "agentname": self.name, "content": str(result)}) # str() to avoid JSON serialization issues
+                if self.context.output_channel != "silent": self.context._print(result) # type: ignore
+                return
+
             tool_call_result = _exec_tool(response)
             if not tool_call_result["correct"]:
                 result = tool_call_result["result"]
             else:
-                if not expanded_tool_response:
+                if tool_handling != "expanded":
                     result = [result_dict["result"] for result_dict in tool_call_result["result"]]
                     if len(result) == 1: result = result[0] # per evitare di restituire una lista con un solo elemento
                 else:
