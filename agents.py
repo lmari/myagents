@@ -194,7 +194,7 @@ class MyAgent:
         if local_response_format and validate: # handling validation in the case of structured output
             try:
                 local_response_format.model_validate(json.loads(result)) # type: ignore
-                self.context._validate(f"Response valid!")
+                self.context._validate(f"Response is valid!")
             except Exception as e:
                 self.context._validate(f"Response format error: {e}")
 
