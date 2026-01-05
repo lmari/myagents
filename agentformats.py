@@ -18,12 +18,20 @@ def _get_format_metadata(format: Type[BaseModel]|None=None) -> dict:
 
 class DecimalNumber(BaseModel):
     """ A decimal number."""
-    number: float = Field(..., description="A decimal number.")
-    rounding: Optional[int] = Field(2, description="The number of digits to which the given number must be rounded.")
+    numero: float = Field(..., description="A decimal number.")
+    arrotondamento: Optional[int] = Field(2, description="The number of digits to which the given number must be rounded.")
 
-class List_(BaseModel):
-    """ A list of entities, as strings."""
-    list: List[str] = Field(..., description="A list of entities, where each entity is a string.")
+class Elenco(BaseModel):
+    """ Un elenco di entità, come stringhe."""
+    elenco: List[str] = Field(..., description="Un elenco di entità, in cui ogni entità è una stringa.")
+
+class RagionamentoPassoPasso(BaseModel):
+    """ La struttura di un ragionamento che giunge alla conclusione passo per passo,
+    spiegando ogni passaggio in dettaglio, senza accontentarsi della prima ipotesi formulata,
+    e solo dopo aver controllato la correttezza di tutti i passaggi."""
+    passi_del_ragionamento: List[str] = Field(..., description="L'elenco dei passi del ragionamento per giungere alla conclusione del problema dato.")
+    conclusione: str = Field(..., description="La conclusione del problema dato.")
+
 
 '''
 class ActionList:

@@ -86,24 +86,76 @@ def read_file(path: str) -> str | None:
     
 # ***************************************************************************
 
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 @openai_function
 def web_search(query: str, max_results: int=3) -> list:
     """
-    Cerca nel web pagine che abbiano come argomento la condizione di ricerca specificata.
+    Esegue una ricerca su DuckDuckGo utilizzando la libreria DDGS.
     Args:
         query: La condizione di ricerca
-        max_results: Il numero massimo di risultati da restituire (3 se non specificato altrimenti)
+        max_results: Il numero massimo di risultati da restituire (default 3)
     Returns:
-        list: L'elenco di risultati della ricerca, o None se non sono stati trovati risultati
+        list: L'elenco dei risultati della ricerca
+    """
+    """
+    results = []
+    with DDGS() as ddgs:
+        for r in ddgs.text(text, max_results=max_results):
+            results.append(r['body'])
+    return results
     """
     return DDGS().text(query, max_results=max_results)
 
 # ***************************************************************************
 
+import wikipedia
+
 @openai_function
-def evaluate_expression(code: str) -> str | None:
+def wikipedia_search(query: str, max_results: int=3, lang: str="it") -> list:
+    """
+    Cerca le pagine di Wikipedia corrispondenti alla query specificata.
+    Args:
+        query: La condizione di ricerca
+        max_results: Il numero massimo di risultati da restituire (default 3)
+        lang: La lingua in cui effettuare la ricerca (default "it")
+    Returns:
+        list: L'elenco dei nomi delle pagine trovate nella ricerca
+    """
+    wikipedia.set_lang(lang)
+    return wikipedia.search(query, results=max_results)
+
+@openai_function
+def get_wikipedia_summaries(query: str, max_pages: int=1, lang: str="it") -> str:
+    """
+    Cerca le pagine di Wikipedia corrispondenti alla query specificata per restituirne i sommari.
+    Se la query corrisponde a due o più condizioni di ricerca, assumi che le condizioni siano separate da ';'.
+    Args:
+        query: Le condizioni di ricerca, separate da ';' se più di una
+        max_pages: Il numero massimo di pagine di cui restituire i sommari (default 3)
+        lang: La lingua in cui effettuare la ricerca (default "it")
+    Returns:
+        str: L'elenco dei sommari delle pagine trovate nella ricerca
+    """
+    wikipedia.set_lang(lang)
+    summaries = []
+    query_parts = [q.strip() for q in query.split(";")] if ";" in query else [query]
+    for part in query_parts:
+        page_titles = wikipedia.search(part, results=max_pages)
+        summaries.append(f"Sommari per la condizione di ricerca: '{part}':")
+        for title in page_titles:
+            try:
+                summaries.append(wikipedia.summary(title))
+            except wikipedia.exceptions.DisambiguationError:
+                summaries.append("")
+            except wikipedia.exceptions.PageError:
+                summaries.append("")
+    return "\n\n".join(summaries)
+
+# ***************************************************************************
+
+@openai_function
+def evaluate_expression(code: str) -> str:
     """
     Valuta l'espressione matematica specificata e restituisce il risultato, o restituisce il messaggio di errore generato.
     Args:
@@ -111,13 +163,7 @@ def evaluate_expression(code: str) -> str | None:
     Returns:
         Il risultato della valutazione dell'espressione o un messaggio di errore
     """
-    code = code.strip()
-    if not code:
-        return None
-    try:
-        return str(eval(code))
-    except Exception as e:
-        return str(e)
+    return str(eval(code))
 
 # ***************************************************************************
 

@@ -81,7 +81,7 @@ class Context:
 class MyAgent:
     def __init__(self, name: str, context: Context, base_url: str=default.base_url,
                  model: str=default.model, role_and_skills: str="", response_format: Type[BaseModel]|None=None, tools: list=[],
-                 max_tokens: int=-1, temperature: float=0.7):
+                 max_tokens: int=1000, temperature: float=0.7):
         """
         Basic agent for OpenAI API.
         Args:
@@ -236,6 +236,7 @@ class MyManager(MyAgent):
                                             last_result = ast.literal_eval(self.context.last_result) # type: ignore
                                             if isinstance(last_result, list):
                                                 for item in last_result:
+                                                    print("****** " + action[1] + " " + str(item))
                                                     agent.do(action[1] + " " + str(item))
                                         except Exception as e:
                                             pass

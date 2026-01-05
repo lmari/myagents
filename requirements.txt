@@ -1,0 +1,10 @@
+openai
+openai_functools
+pydantic
+Markdown
+ddgs
+python-pptx
+beautifulsoup4
+pytz
+requests
+ipython
